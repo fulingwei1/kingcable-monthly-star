@@ -1,7 +1,7 @@
 import streamlit as st
 from PIL import Image
 
-from parser import load_ws, get_month_columns, extract
+from star_parser import load_ws, get_month_columns, extract
 from poster import generate_poster, make_initial_avatar   # 你已有的头像/海报模块
 
 
