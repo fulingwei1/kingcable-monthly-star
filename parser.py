@@ -33,48 +33,49 @@ def get_month_columns(ws) -> Dict[str, int]:
     return month_map
 
 
-def split_cell_into_people(text: str) -> List[str]:
+ddef split_cell_into_people(text: str) -> List[str]:
     """
-    把一个单元格里的内容按“多人推荐”拆分成多个片段，每个片段代表一个人。
+    将一个单元格内容拆分成多个“个人推荐片段”。
 
-    规则：
-    - 先按行拆开，去掉空行。
-    - 识别“头行”（认为是一个人的起始行）：
-        * 含“推荐”的行；
-        * 或者形如 “XX-XX之星” 的行（不写“推荐”也能识别）。
-    - 从每个头行开始，直到下一个头行之前的所有行，视为一个人的完整文本片段。
+    支持三种人头格式：
+    A: 推荐：张三-敬业之星
+    B: 张三-敬业之星 / 张三:敬业之星
+    C: 张三【敬业之星】
+
+    不再依赖换行，直接在整段 string 上用正则找所有“人头”起始位置，
+    然后按这些起点把文本切成若干 segment。
     """
     if not isinstance(text, str):
         text = str(text or "")
-
-    lines = [l.strip() for l in text.splitlines() if l and str(l).strip()]
-    if not lines:
+    text = text.strip()
+    if not text:
         return []
 
-    header_idx: List[int] = []
+    # 人头正则：可选“推荐”，然后 2~4 个汉字的人名，后面跟“之星”类的奖项
+    # 例如：
+    #   推荐：朱文杰-精准接线之星
+    #   朱文杰-精准接线之星
+    #   朱文杰【精准接线之星】
+    header_pattern = re.compile(
+        r'(推荐[:： ]*)?'
+        r'([\u4e00-\u9fff]{2,4})'             # 姓名
+        r'\s*'
+        r'(?:'
+        r'【[^】\n]{0,15}之星】'               # 朱文杰【精准接线之星】
+        r'|[-－:：][^，。；\n]{0,15}之星'      # 朱文杰-精准接线之星 / ：敬业之星
+        r')'
+    )
 
-    for i, line in enumerate(lines):
-        # 情况1：包含“推荐”
-        if "推荐" in line:
-            header_idx.append(i)
-            continue
-
-        # 情况2：不含“推荐”，但长得像 “姓名-xxx之星”
-        #   例： "卢俊宏-敬业之星"
-        if "之星" in line and re.search(r'[\u4e00-\u9fff]{2,4}\s*[-－:：]', line):
-            header_idx.append(i)
-
-    header_idx = sorted(set(header_idx))
-
-    # 如果没识别出头行，就当成一个整体
-    if not header_idx:
-        return [text.strip()]
+    matches = list(header_pattern.finditer(text))
+    if not matches:
+        # 完全识别不出人头，就当成一个整体，后面再由 parse_name_award 自己想办法
+        return [text]
 
     segments: List[str] = []
-    for j, start in enumerate(header_idx):
-        end = header_idx[j + 1] if j + 1 < len(header_idx) else len(lines)
-        seg_lines = lines[start:end]
-        seg = "\n".join(seg_lines).strip()
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        seg = text[start:end].strip()
         if seg:
             segments.append(seg)
 
