@@ -83,41 +83,37 @@ def split_cell_into_people(text: str) -> List[str]:
 
 def parse_name_award(text: str):
     """
-    从一整段“推荐 + 奖项”文本中尽量拆出：
-    - name: 姓名
-    - award: 奖项名称（XXX之星）
+    从人头行中解析姓名和奖项，支持三类格式：
+    A: 推荐：张三-敬业之星
+    B: 张三-敬业之星
+    C: 张三【敬业之星】
 
-    兼容格式：
-    - '推荐：张三-突出贡献之星'
-    - '推荐张三：敬业之星'
-    - '推荐张三-敬业之星\\n评语：……'
-    - '张三-敬业之星'
-    - '张三：敬业之星'
     """
     t = (text or "").strip()
-    if not t:
-        return "", ""
+    first = t.splitlines()[0].strip()
 
-    first_line = t.splitlines()[0].strip()
+    # 格式 C：张三【敬业之星】
+    m = re.match(r'^([\u4e00-\u9fff]{2,4})【(.+?)】', first)
+    if m:
+        return m.group(1), m.group(2)
 
-    # 去掉开头的“推荐”
+    # 格式 A 去掉推荐
     for prefix in ["推荐：", "推荐:", "推荐 ", "推荐"]:
-        if first_line.startswith(prefix):
-            first_line = first_line[len(prefix):].strip()
+        if first.startswith(prefix):
+            first = first[len(prefix):].strip()
             break
 
-    # 常见分隔符：张三-敬业之星 / 张三：敬业之星
+    # 格式 A & B：张三-敬业之星 / 张三：敬业之星
     for sep in ["：", ":", "-", "－"]:
-        if sep in first_line:
-            name, award = first_line.split(sep, 1)
-            return name.strip("【】 、， "), award.strip()
+        if sep in first:
+            name, award = first.split(sep, 1)
+            return name.strip(), award.strip()
 
-    # 兜底：取前 2~3 字作姓名，后面当奖项
-    plain = first_line.strip("【】 、， ")
-    if len(plain) >= 3:
-        return plain[:2], plain[2:]
-    return plain, ""
-
+    # 兜底
+    first = first.strip()
+    if len(first) >= 3:
+        return first[:2], first[2:]
+    return first, ""
 
 def parse_comment(text: str) -> str:
     """
