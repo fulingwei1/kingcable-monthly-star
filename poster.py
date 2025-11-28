@@ -1,7 +1,15 @@
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-FONT = "assets/msyh.ttc"   # 你必须放一个中文字体到 assets/
+# 不再依赖外部字体文件，统一走兜底逻辑
+def get_font(size: int):
+    try:
+        # 如果以后你在仓库里放了合法的字体文件，比如 "NotoSansSC-Regular.otf"
+        # 可以把下面这一行改成对应文件名
+        return ImageFont.truetype("NotoSansSC-Regular.otf", size)
+    except Exception:
+        # 找不到就用默认字体，至少保证不崩
+        return ImageFont.load_default()
 
 AVATAR_SIZE = 200
 AVATAR_POS = (100, 200)
@@ -14,8 +22,8 @@ def make_initial_avatar(name, size=256):
     img = Image.new("RGBA", (size, size), (0,0,0,0))
     draw = ImageDraw.Draw(img)
     draw.ellipse((0,0,size,size), fill=(80,130,255))
-    font = ImageFont.truetype(FONT, int(size * 0.45))
-    initial = name[0]
+    font = get_font(int(size * 0.45))
+    initial = (name or "★")[0]
     w,h = draw.textsize(initial, font=font)
     draw.text(((size-w)/2,(size-h)/2), initial, font=font, fill="white")
     return img
@@ -45,18 +53,18 @@ def generate_poster(template, star, avatar_img):
     tpl = template.copy().convert("RGBA")
     draw = ImageDraw.Draw(tpl)
 
-    # 头像
     avatar = circle(avatar_img, AVATAR_SIZE)
     tpl.paste(avatar, AVATAR_POS, mask=avatar)
 
-    name_font = ImageFont.truetype(FONT, 40)
-    award_font = ImageFont.truetype(FONT, 32)
-    comment_font = ImageFont.truetype(FONT, 26)
+    name_font = get_font(40)
+    award_font = get_font(32)
+    comment_font = get_font(26)
 
     draw.text(NAME_POS, star["name"], font=name_font, fill="black")
     draw.text(AWARD_POS, star["award"], font=award_font, fill="black")
 
-    comment_lines = wrap(draw, star["comment"], comment_font, COMMENT_WIDTH)
+    comment_text = star.get("comment") or ""
+    comment_lines = wrap(draw, comment_text, comment_font, COMMENT_WIDTH)
     x,y = COMMENT_POS
     for line in comment_lines:
         draw.text((x,y), line, font=comment_font, fill="black")
