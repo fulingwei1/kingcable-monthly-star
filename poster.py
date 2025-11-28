@@ -1,99 +1,159 @@
+from io import BytesIO
+from typing import Dict, Any
+
 from PIL import Image, ImageDraw, ImageFont
-import io
 
-# 字体：先尝试用仓库里字体文件，没有就用默认
-def get_font(size: int):
-    try:
-        # 如果将来你在仓库里放了自己的字体，比如 fonts/NotoSansSC-Regular.otf
-        # 把下面改成那个路径即可
-        return ImageFont.truetype("NotoSansSC-Regular.otf", size)
-    except Exception:
-        return ImageFont.load_default()
 
-AVATAR_SIZE = 200
-AVATAR_POS = (100, 200)
-NAME_POS = (350, 210)
-AWARD_POS = (350, 270)
-COMMENT_POS = (100, 350)
-COMMENT_WIDTH = 800
+def _load_font(size: int) -> ImageFont.ImageFont:
+    """
+    尝试加载几种常见中文字体，失败则退回 PIL 内置字体（不会再抛异常）。
+    """
+    font_paths = [
+        "fonts/SourceHanSansSC-Regular.otf",
+        "fonts/SourceHanSansSC-Regular.ttf",
+        "fonts/SimHei.ttf",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/STHeiti.ttc",
+    ]
+    for path in font_paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    # 兜底：内置小字体，保证不崩
+    return ImageFont.load_default()
 
-def _text_wh(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont):
-    """
-    用 textbbox 计算文字宽高，兼容新版本 Pillow（已经不推荐 textsize 了）
-    """
-    if not text:
-        return 0, 0
-    bbox = draw.textbbox((0, 0), text, font=font)
-    w = bbox[2] - bbox[0]
-    h = bbox[3] - bbox[1]
-    return w, h
 
-def make_initial_avatar(name, size=256):
+def make_initial_avatar(name: str, size: int = 260) -> Image.Image:
     """
-    没有上传头像时，用姓名首字画一个圆形头像。
+    当没上传头像时，用姓名生成一个夸张一点的圆形首字母头像。
     """
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    text = (name or "").strip()
+    ch = text[0] if text else "?"
+
+    # 用名字的 hash 决定背景色，保证同一人颜色稳定
+    h = abs(hash(name)) if name else 0
+    bg_color = (80 + h % 150, 80 + (h // 10) % 150, 80 + (h // 100) % 150)
+
+    img = Image.new("RGBA", (size, size), bg_color)
     draw = ImageDraw.Draw(img)
-    draw.ellipse((0, 0, size, size), fill=(80, 130, 255))
 
-    font = get_font(int(size * 0.45))
-    initial = (name or "★")[0]
-    w, h = _text_wh(draw, initial, font)
-    draw.text(((size - w) / 2, (size - h) / 2), initial, font=font, fill="white")
-    return img
+    font = _load_font(int(size * 0.6))
+    w, h_text = draw.textsize(ch, font=font)
+    x = (size - w) / 2
+    y = (size - h_text) / 2 - 10
 
-def circle(img, size):
-    img = img.convert("RGBA").resize((size, size))
+    draw.text((x, y), ch, font=font, fill=(255, 255, 255, 255))
+
+    # 裁成圆形
     mask = Image.new("L", (size, size), 0)
-    d = ImageDraw.Draw(mask)
-    d.ellipse((0, 0, size, size), fill=255)
-    img.putalpha(mask)
-    return img
+    mdraw = ImageDraw.Draw(mask)
+    mdraw.ellipse((0, 0, size, size), fill=255)
+    circle = Image.new("RGBA", (size, size))
+    circle.paste(img, (0, 0), mask)
 
-def wrap(draw, text, font, width):
+    return circle
+
+
+def _draw_wrapped_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    xy,
+    max_width: int,
+    fill=(0, 0, 0, 255),
+    line_spacing: int = 4,
+):
     """
-    用 textbbox 做简单的中文自动换行。
+    简单按像素宽度换行绘制多行中文文本。
     """
-    out, line = [], ""
-    for ch in text:
-        w, _ = _text_wh(draw, line + ch, font)
-        if w <= width:
-            line += ch
-        else:
-            if line:
-                out.append(line)
-            line = ch
-    if line:
-        out.append(line)
-    return out
+    x, y = xy
+    lines = []
 
-def generate_poster(template, star, avatar_img):
-    tpl = template.copy().convert("RGBA")
-    draw = ImageDraw.Draw(tpl)
+    for para in (text or "").splitlines():
+        para = para.rstrip()
+        if not para:
+            lines.append("")
+            continue
+        buf = ""
+        for ch in para:
+            w, _ = draw.textsize(buf + ch, font=font)
+            if w <= max_width:
+                buf += ch
+            else:
+                lines.append(buf)
+                buf = ch
+        if buf:
+            lines.append(buf)
 
-    avatar = circle(avatar_img, AVATAR_SIZE)
-    tpl.paste(avatar, AVATAR_POS, mask=avatar)
+    line_height = getattr(font, "size", 16) + line_spacing
 
-    name_font = get_font(40)
-    award_font = get_font(32)
-    comment_font = get_font(26)
-
-    name_text = star.get("name", "")
-    award_text = star.get("award", "")
-    comment_text = star.get("comment") or ""
-
-    draw.text(NAME_POS, name_text, font=name_font, fill="black")
-    draw.text(AWARD_POS, award_text, font=award_font, fill="black")
-
-    comment_lines = wrap(draw, comment_text, comment_font, COMMENT_WIDTH)
-    x, y = COMMENT_POS
-    line_height = 36
-    for line in comment_lines:
-        draw.text((x, y), line, font=comment_font, fill="black")
+    for line in lines:
+        draw.text((x, y), line, font=font, fill=fill)
         y += line_height
 
-    buf = io.BytesIO()
-    tpl.save(buf, format="PNG")
-    buf.seek(0)
-    return buf, tpl
+
+def generate_poster(
+    template_img: Image.Image,
+    avatar_img: Image.Image,
+    star: Dict[str, Any],
+    month_label: str,
+) -> Image.Image:
+    """
+    把模板图、头像、姓名/部门/奖项/评语等信息合成一张海报。
+    模板坐标默认写死，你要微调就自己改常量。
+    """
+    base = template_img.convert("RGBA")
+
+    # 一些布局常量（按你模板大概 1080x1920 竖版来设计的）
+    AVATAR_SIZE = 260
+    AVATAR_POS = (80, 260)  # 左上角
+    NAME_POS = (380, 260)
+    DEPT_POS = (380, 320)
+    AWARD_POS = (380, 380)
+    MONTH_POS = (380, 440)
+    COMMENT_POS = (120, 540)
+    COMMENT_WIDTH = base.size[0] - 240
+
+    # 处理头像为圆形
+    avatar = avatar_img.convert("RGBA").resize((AVATAR_SIZE, AVATAR_SIZE))
+    mask = Image.new("L", (AVATAR_SIZE, AVATAR_SIZE), 0)
+    mdraw = ImageDraw.Draw(mask)
+    mdraw.ellipse((0, 0, AVATAR_SIZE, AVATAR_SIZE), fill=255)
+    circle_avatar = Image.new("RGBA", (AVATAR_SIZE, AVATAR_SIZE))
+    circle_avatar.paste(avatar, (0, 0), mask)
+
+    base.paste(circle_avatar, AVATAR_POS, circle_avatar)
+
+    draw = ImageDraw.Draw(base)
+
+    font_title = _load_font(46)
+    font_sub = _load_font(32)
+    font_comment = _load_font(30)
+
+    name = star.get("name", "")
+    dept = f"{star.get('dept1', '')} {star.get('dept2', '')}".strip()
+    award = star.get("award", "")
+    comment = star.get("comment", "") or star.get("raw", "")
+
+    draw.text(NAME_POS, f"{name}", font=font_title, fill=(0, 0, 0, 255))
+    if dept:
+        draw.text(DEPT_POS, dept, font=font_sub, fill=(0, 0, 0, 255))
+    if award:
+        draw.text(AWARD_POS, award, font=font_sub, fill=(0, 0, 0, 255))
+    if month_label:
+        draw.text(MONTH_POS, str(month_label), font=font_sub, fill=(0, 0, 0, 255))
+
+    _draw_wrapped_text(
+        draw,
+        comment,
+        font_comment,
+        COMMENT_POS,
+        max_width=COMMENT_WIDTH,
+        fill=(0, 0, 0, 255),
+    )
+
+    return base
+
+
 
